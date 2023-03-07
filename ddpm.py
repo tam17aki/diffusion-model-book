@@ -24,10 +24,9 @@ SOFTWARE.
 """
 import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
-from torch import optim
+from torch import nn, optim
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -52,17 +51,17 @@ class DDPM(nn.Module):
         self.model = nn.Sequential(*layers)
         self.criterion = nn.MSELoss()
 
-    def forward(self, inputs, t):
+    def forward(self, inputs, times):
         """Estimate perturbation noise.
 
         Args:
-            inputs: perturbed sample
-            t: time step
+            inputs: perturbed samples
+            times: time steps
 
         Returns:
             outputs: perturbation noise
         """
-        inputs = torch.cat((inputs, t.unsqueeze(-1)), dim=1)
+        inputs = torch.cat((inputs, times.unsqueeze(-1)), dim=1)
         outputs = self.model(inputs)
         return outputs
 
@@ -78,11 +77,11 @@ class DDPM(nn.Module):
             loss: DDPM MSE-loss
         """
         # generate B random integers within [0, T]
-        t = torch.randint(0, len(inputs), (inputs.shape[0],), device=DEVICE)
+        times = torch.randint(0, len(inputs), (inputs.shape[0],), device=DEVICE)
         noise = torch.randn_like(inputs)
-        perturbed = torch.sqrt(alpha_bars[t]).unsqueeze(-1) * inputs
-        perturbed += torch.sqrt(beta_bars[t]).unsqueeze(-1) * noise
-        noise_pred = self.forward(perturbed, t)
+        perturbed = torch.sqrt(alpha_bars[times]).unsqueeze(-1) * inputs
+        perturbed += torch.sqrt(beta_bars[times]).unsqueeze(-1) * noise
+        noise_pred = self.forward(perturbed, times)
         loss = self.cfg.model.loss_weight * self.criterion(noise_pred, noise)
         return loss
 
@@ -99,22 +98,22 @@ class DDPM(nn.Module):
         """
         n_samples = self.cfg.sampling.n_samples
         n_channels = self.cfg.model.n_channels
-        xt = torch.randn(n_samples, n_channels, device=DEVICE)
-        T = len(alphas)
-        for t in range(T - 1, -1, -1):
-            print(f"t:{t}")
-            ut = torch.randn(n_samples, n_channels, device=DEVICE)
-            if t == 0:
-                ut[:, :] = 0.0
+        x_t = torch.randn(n_samples, n_channels, device=DEVICE)
+        n_steps = len(alphas)
+        for time_t in range(n_steps - 1, -1, -1):
+            print(f"t:{time_t}")
+            u_t = torch.randn(n_samples, n_channels, device=DEVICE)
+            if time_t == 0:
+                u_t[:, :] = 0.0
             with torch.no_grad():
                 noise_pred = self.forward(
-                    xt, t * torch.ones(n_samples, dtype=xt.dtype, device=DEVICE)
+                    x_t, time_t * torch.ones(n_samples, dtype=x_t.dtype, device=DEVICE)
                 )
-                sigma_t = torch.sqrt(betas[t])
-                xt = xt - betas[t] / torch.sqrt(beta_bars[t]) * noise_pred
-                xt *= 1 / torch.sqrt(alphas[t])
-                xt += sigma_t * ut
-        return xt
+                sigma_t = torch.sqrt(betas[time_t])
+                x_t = x_t - betas[time_t] / torch.sqrt(beta_bars[time_t]) * noise_pred
+                x_t *= 1 / torch.sqrt(alphas[time_t])
+                x_t += sigma_t * u_t
+        return x_t
 
 
 def get_model(cfg):
@@ -161,10 +160,12 @@ def get_noise_schedules(cfg):
     """Get noise schedules (alpha & beta)."""
     beta_start = cfg.DDPM.beta_start  # 初期分布 β_0
     beta_end = cfg.DDPM.beta_end  # 最終分布 β_T
-    T = cfg.DDPM.T  # 拡散過程の分割ステップ数
+    n_steps = cfg.DDPM.n_steps  # 拡散過程の分割ステップ数
 
     # ノイズスケジュールたちを決定
-    betas = torch.linspace(beta_start, beta_end, T, dtype=torch.float32, device=DEVICE)
+    betas = torch.linspace(
+        beta_start, beta_end, n_steps, dtype=torch.float32, device=DEVICE
+    )
     alphas = 1.0 - betas
     alpha_bars = torch.cumprod(alphas, axis=0)
     beta_bars = 1.0 - alpha_bars
@@ -181,7 +182,7 @@ def get_optimizer(cfg: DictConfig, model):
 
 
 def get_lr_scheduler(cfg: DictConfig, optimizer):
-    """Instantiate scheduler form optimizer."""
+    """Instantiate scheduler form optimizerf."""
     lr_scheduler_class = getattr(
         optim.lr_scheduler, cfg.training.optim.lr_scheduler.name
     )

@@ -25,10 +25,9 @@ SOFTWARE.
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torch.nn as nn
 from hydra import compose, initialize
 from omegaconf import DictConfig, OmegaConf
-from torch import optim
+from torch import nn, optim
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -75,10 +74,12 @@ class ScoreModel(nn.Module):
         """
         # generate B random integers within [0, T]
         # 各時刻での最適化をバッチ方向に並列で行うためのトリック
-        t = torch.randint(0, len(sigmas), (samples.shape[0],), device=sigmas.device)
+        times = torch.randint(0, len(sigmas), (samples.shape[0],), device=sigmas.device)
 
         # 各時刻でのsigmaたち（様々に異なるノイズの強さ）を、バッチ方向に一斉に取り出す
-        used_sigmas = sigmas[t].view(samples.shape[0], *([1] * len(samples.shape[1:])))
+        used_sigmas = sigmas[times].view(
+            samples.shape[0], *([1] * len(samples.shape[1:]))
+        )
 
         noise = torch.randn_like(samples) * used_sigmas  # ノイズを生成 [B, 2]
         perturbed = samples + noise  # \tilde{x}; サンプルに擾乱を加える
@@ -92,8 +93,8 @@ class ScoreModel(nn.Module):
         target = target.view(target.shape[0], -1)  # [B, 1] -> [B]
         scores = scores.view(scores.shape[0], -1)  # [B, 1] -> [B]
 
-        w = used_sigmas.squeeze(-1) ** 2  # 各時刻で誤差にかける重み
-        loss = ((scores - target) ** 2).sum(dim=-1) * w
+        weight = used_sigmas.squeeze(-1) ** 2  # 各時刻で誤差にかける重み
+        loss = ((scores - target) ** 2).sum(dim=-1) * weight
 
         # バッチ（時刻）方向に平均 -> 「sum_{t=1}^{T} w_t * E」を近似
         # →各時刻は[0, T] からの一様サンプリング（時刻の重複を許したサンプリング）、
@@ -116,23 +117,22 @@ class ScoreModel(nn.Module):
         n_channels = self.cfg.model.n_channels
         alpha = self.cfg.sampling.alpha
         n_steps = self.cfg.sampling.n_steps
-        sigma_T = sigmas[-1]  # noise strength at last step
-        x_0 = torch.randn(n_samples, n_channels, device=DEVICE) * sigma_T
+        sigma_last = sigmas[-1]  # noise strength at last step
+        x_0 = torch.randn(n_samples, n_channels, device=DEVICE) * sigma_last
         x_tk = x_0
-        for t in range(len(sigmas) - 1, -1, -1):
-            sigma_t = sigmas[t]
-            alpha_t = alpha * (sigma_t**2) / (sigma_T**2)
-            print(f"t:{t}, sigma_t:{sigma_t}, alpha_t:{alpha_t}")
+        for time_t in range(len(sigmas) - 1, -1, -1):
+            sigma_t = sigmas[time_t]
+            alpha_t = alpha * (sigma_t**2) / (sigma_last**2)
+            print(f"t:{time_t}, sigma_t:{sigma_t}, alpha_t:{alpha_t}")
             for k in range(n_steps + 1):
                 u_k = torch.randn(n_samples, n_channels, device=DEVICE)  # u_k ~ N(0, I)
-                if (k == n_steps) and t == 0:  # final step
+                if (k == n_steps) and time_t == 0:  # final step
                     u_k[:, :] = 0.0  # no noise is added
                 with torch.no_grad():
-                    # duplication
-                    sigma_t_dup = torch.ones((n_samples, 1), device=DEVICE) * sigma_t
-
                     # compute denoising score from perturbed samples and noise
-                    score = self.forward(x_tk, sigma_t_dup)
+                    score = self.forward(
+                        x_tk, torch.ones((n_samples, 1), device=DEVICE) * sigma_t
+                    )
 
                     # sampling via Langevin Monte Carlo
                     x_tk = x_tk + alpha_t * score + torch.sqrt(2 * alpha_t) * u_k
@@ -184,12 +184,14 @@ def get_sigmas(cfg):
     """get."""
     sigma_begin = cfg.SBM.sigma_begin  # 初期分布
     sigma_end = cfg.SBM.sigma_end  # 最終分布（固定値）
-    T = cfg.SBM.T  # 拡散過程の分割ステップ数
+    n_steps = cfg.SBM.n_steps  # 拡散過程の分割ステップ数
 
     # 対数上で等分割した後にexpでスケールを戻す
     # →各時刻におけるノイズたちを手に入れる
     sigmas = (
-        torch.tensor(np.exp(np.linspace(np.log(sigma_begin), np.log(sigma_end), T)))
+        torch.tensor(
+            np.exp(np.linspace(np.log(sigma_begin), np.log(sigma_end), n_steps))
+        )
         .float()
         .to(DEVICE)
     )

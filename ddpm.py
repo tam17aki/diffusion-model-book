@@ -182,7 +182,7 @@ def get_optimizer(cfg: DictConfig, model):
 
 
 def get_lr_scheduler(cfg: DictConfig, optimizer):
-    """Instantiate scheduler form optimizerf."""
+    """Instantiate scheduler form optimizer."""
     lr_scheduler_class = getattr(
         optim.lr_scheduler, cfg.training.optim.lr_scheduler.name
     )
@@ -243,7 +243,7 @@ def plot_density(samples, title="Sample Density"):
 
 
 def main(cfg: DictConfig):
-    """Perform training raiD and sampling.DPM t"""
+    """Perform training of DDPM and sampling."""
     print(OmegaConf.to_yaml(cfg), flush=True)  # dump configuration
 
     # 訓練用データの準備

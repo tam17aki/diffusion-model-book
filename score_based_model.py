@@ -111,7 +111,7 @@ class ScoreModel(nn.Module):
             alpha: scale of step size
 
         Returns:
-            x_tk: sample after Langevin Monte CarloM af
+            x_tk: sample after Langevin Monte Carlo
         """
         n_samples = self.cfg.sampling.n_samples
         n_channels = self.cfg.model.n_channels
@@ -181,7 +181,7 @@ def get_dataloader(dataset, cfg):
 
 
 def get_sigmas(cfg):
-    """get."""
+    """Get a set of noise strengths."""
     sigma_begin = cfg.SBM.sigma_begin  # 初期分布
     sigma_end = cfg.SBM.sigma_end  # 最終分布（固定値）
     n_steps = cfg.SBM.n_steps  # 拡散過程の分割ステップ数
@@ -269,7 +269,7 @@ def plot_density(samples, title="Sample Density"):
 
 
 def main(cfg: DictConfig):
-    """main function"""
+    """Perform training of SBM and sampling."""
     print(OmegaConf.to_yaml(cfg), flush=True)  # dump configuration
 
     # 訓練用データの準備

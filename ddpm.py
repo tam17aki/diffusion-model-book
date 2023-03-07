@@ -223,7 +223,7 @@ def plot_density(samples, title="Sample Density"):
 
     Args:
         samples: 2-D Tensors [N, 2]
-    ."""
+    """
     plot_samples = samples.cpu().numpy()
     plt.hist2d(
         plot_samples[:, 0],

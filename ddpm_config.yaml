@@ -1,10 +1,8 @@
 DDPM:
   n_samples: 1000000
   sigma: 0.1
-  sigma_begin: 0.001 # 初期時刻 σ_0
-  sigma_end: 1.0 # 終端時刻 σ_T（固定値）
-  beta_start: 0.0001 # 初期時刻
-  beta_end: 0.02 # 終端時刻
+  beta_start: 0.0001 # 初期時刻のβ_0
+  beta_end: 0.02 # 終端時刻のβ_T
   n_steps: 1000 # 拡散過程の分割ステップ数
 
 sampling:  # ランジュバンサンプリング

@@ -252,7 +252,7 @@ def main(cfg: DictConfig):
     # 真のデータ分布をプロット（ガウス混合分布, 混合数2）
     plot_density(normalized_samples, title="Sample Density")
 
-    # 各時刻におけるノイズたちを手に入れる
+    # ノイズスケジュールたちを手に入れる
     alphas, betas, alpha_bars, beta_bars = get_noise_schedules(cfg)
 
     # DDPMを訓練

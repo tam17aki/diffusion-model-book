@@ -5,8 +5,8 @@ DDPM:
   beta_end: 0.02 # 終端時刻のβ_T
   n_steps: 1000 # 拡散過程の分割ステップ数
 
-sampling:  # ランジュバンサンプリング
-  n_samples: 100000  # SBMサンプリングを動かすときのサンプル数
+sampling:  # DDPMサンプリング
+  n_samples: 100000  # DDPMサンプリングを動かすときのサンプル数
   alpha: 0.1
   n_steps: 200
 

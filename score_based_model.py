@@ -96,8 +96,8 @@ class ScoreModel(nn.Module):
         weight = used_sigmas.squeeze(-1) ** 2  # 各時刻で誤差にかける重み
         loss = ((scores - target) ** 2).sum(dim=-1) * weight
 
-        # バッチ（時刻）方向に平均 -> 「sum_{t=1}^{T} w_t * E」を近似
-        # →各時刻は[0, T] からの一様サンプリング（時刻の重複を許したサンプリング）、
+        # バッチ（時刻）方向に平均 -> 「sum_{t=1}^{T} w_t * E」のモンテカルロ近似
+        # →各時刻は[0, T] からの独立かつ一様なサンプリング（時刻の重複を許したサンプリング）、
         # 時刻に関する「和」を時刻に関する「期待値」で置き換えている
         return loss.mean()
 

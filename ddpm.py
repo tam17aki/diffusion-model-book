@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """Sample script for training Denoising Diffusion Probabilistic Model
 
-Copyright (C) 2023 by shu65
-Copyright (C) 2023 by ballforest
+Copyright (C) 2023 by Shuji SUZUKI
+Copyright (C) 2023 by Akira TAMAMORI
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

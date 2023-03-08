@@ -51,6 +51,24 @@ class DDPM(nn.Module):
         self.model = nn.Sequential(*layers)
         self.criterion = nn.MSELoss()
 
+        # noise schedules
+        beta_start = cfg.DDPM.beta_start  # 初期分布 β_0
+        beta_end = cfg.DDPM.beta_end  # 最終分布 β_T
+        n_steps = cfg.DDPM.n_steps  # 拡散過程の分割ステップ数
+        betas = torch.linspace(
+            beta_start, beta_end, n_steps, dtype=torch.float32, device=DEVICE
+        )
+        alphas = 1.0 - betas
+        alpha_bars = torch.cumprod(alphas, axis=0)
+        beta_bars = 1.0 - alpha_bars
+
+        # https://github.com/abarankab/DDPM/blob/main/ddpm/diffusion.py
+        self.register_buffer("sqrt_alpha_bars", torch.sqrt(alpha_bars))
+        self.register_buffer("sqrt_beta_bars", torch.sqrt(beta_bars))
+        self.register_buffer("reciprocal_sqrt_alphas", torch.sqrt(1 / alphas))
+        self.register_buffer("denoise_coeff", betas / torch.sqrt(beta_bars))
+        self.register_buffer("sigma", torch.sqrt(betas))
+
     def forward(self, inputs, times):
         """Estimate perturbation noise.
 
@@ -65,13 +83,11 @@ class DDPM(nn.Module):
         outputs = self.model(inputs)
         return outputs
 
-    def get_loss(self, inputs, alpha_bars, beta_bars):
+    def get_loss(self, inputs):
         """Compute loss in DDPM.
 
         Args:
             inputs: scattered samples from a mixture of Gaussians [B, C]
-            alphaars: a set of noise strengths [T]
-            beta_bars: a set of noise strengths [T]
 
         Returns:
             loss: DDPM MSE-loss
@@ -79,19 +95,15 @@ class DDPM(nn.Module):
         # generate B random integers within [0, T]
         times = torch.randint(0, len(inputs), (inputs.shape[0],), device=DEVICE)
         noise = torch.randn_like(inputs)
-        perturbed = torch.sqrt(alpha_bars[times]).unsqueeze(-1) * inputs
-        perturbed += torch.sqrt(beta_bars[times]).unsqueeze(-1) * noise
+        perturbed = self.sqrt_alpha_bars[times].unsqueeze(-1) * inputs
+        perturbed += self.sqrt_beta_bars[times].unsqueeze(-1) * noise
         noise_pred = self.forward(perturbed, times)
         loss = self.cfg.model.loss_weight * self.criterion(noise_pred, noise)
         return loss
 
-    def sampling(self, alphas, betas, beta_bars):
+    @torch.no_grad()
+    def sampling(self):
         """Perform DDPM sampling.
-
-        Args:
-            alphas: a set of noise schedules [T]
-            betas: a set of noise schedules [T]
-            beta_bars: a set of noise strengths [T]
 
         Returns:
             xt: sample from reverse diffusion process [N, C]
@@ -99,20 +111,21 @@ class DDPM(nn.Module):
         n_samples = self.cfg.sampling.n_samples
         n_channels = self.cfg.model.n_channels
         x_t = torch.randn(n_samples, n_channels, device=DEVICE)
-        n_steps = len(alphas)
+        n_steps = len(self.sqrt_alpha_bars)
         for time_t in range(n_steps - 1, -1, -1):
             print(f"t:{time_t}")
             u_t = torch.randn(n_samples, n_channels, device=DEVICE)
             if time_t == 0:
                 u_t[:, :] = 0.0
-            with torch.no_grad():
-                noise_pred = self.forward(
-                    x_t, time_t * torch.ones(n_samples, dtype=x_t.dtype, device=DEVICE)
-                )
-                sigma_t = torch.sqrt(betas[time_t])
-                x_t = x_t - betas[time_t] / torch.sqrt(beta_bars[time_t]) * noise_pred
-                x_t *= 1 / torch.sqrt(alphas[time_t])
-                x_t += sigma_t * u_t
+
+            noise_pred = self.forward(
+                x_t, time_t * torch.ones(n_samples, dtype=x_t.dtype, device=DEVICE)
+            )
+            x_t = (
+                self.reciprocal_sqrt_alphas[time_t]
+                * (x_t - self.denoise_coeff[time_t] * noise_pred)
+                + self.sigma[time_t] * u_t
+            )
         return x_t
 
 
@@ -156,22 +169,6 @@ def get_dataloader(dataset, cfg):
     return dataloader
 
 
-def get_noise_schedules(cfg):
-    """Get noise schedules (alpha & beta)."""
-    beta_start = cfg.DDPM.beta_start  # 初期分布 β_0
-    beta_end = cfg.DDPM.beta_end  # 最終分布 β_T
-    n_steps = cfg.DDPM.n_steps  # 拡散過程の分割ステップ数
-
-    # ノイズスケジュールたちを決定
-    betas = torch.linspace(
-        beta_start, beta_end, n_steps, dtype=torch.float32, device=DEVICE
-    )
-    alphas = 1.0 - betas
-    alpha_bars = torch.cumprod(alphas, axis=0)
-    beta_bars = 1.0 - alpha_bars
-    return alphas, betas, alpha_bars, beta_bars
-
-
 def get_optimizer(cfg: DictConfig, model):
     """Instantiate optimizer."""
     optimizer_class = getattr(optim, cfg.training.optim.optimizer.name)
@@ -192,11 +189,9 @@ def get_lr_scheduler(cfg: DictConfig, optimizer):
     return lr_scheduler
 
 
-def training(cfg: DictConfig, dataloader, alpha_bars, beta_bars):
+def training(cfg: DictConfig, model, dataloader, optimizer):
     """Perform training."""
     dataloader_iter = iter(dataloader)
-    model = get_model(cfg)
-    optimizer = get_optimizer(cfg, model)
     if cfg.training.use_scheduler:
         lr_scheduler = get_lr_scheduler(cfg, optimizer)
     for i in range(cfg.training.n_steps):
@@ -208,7 +203,7 @@ def training(cfg: DictConfig, dataloader, alpha_bars, beta_bars):
         inputs = inputs.to(DEVICE)
 
         optimizer.zero_grad()
-        loss = model.get_loss(inputs, alpha_bars, beta_bars)
+        loss = model.get_loss(inputs)
         loss.backward()
         optimizer.step()
         if cfg.training.use_scheduler:
@@ -253,14 +248,13 @@ def main(cfg: DictConfig):
     # 真のデータ分布をプロット（ガウス混合分布, 混合数2）
     plot_density(normalized_samples, title="Sample Density")
 
-    # ノイズスケジュールたちを手に入れる
-    alphas, betas, alpha_bars, beta_bars = get_noise_schedules(cfg)
-
     # DDPMを訓練
-    model = training(cfg, dataloader, alpha_bars, beta_bars)
+    model = get_model(cfg)
+    optimizer = get_optimizer(cfg, model)
+    training(cfg, model, dataloader, optimizer)
 
     # 大量のサンプルを一様にばらまいたのちにDDPMサンプリングさせる
-    samples_pred = model.sampling(alphas=alphas, betas=betas, beta_bars=beta_bars)
+    samples_pred = model.sampling()
 
     # サンプリング結果が2つのモードに集まることを確認 →DDPMがうまく動いている
     plot_density(samples_pred, title="Predicted Sample Density")

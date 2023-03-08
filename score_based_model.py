@@ -61,7 +61,7 @@ class ScoreModel(nn.Module):
             outputs: denoising score
         """
         inputs = torch.cat((inputs, sigma), dim=1)
-        outputs = self.model(inputs)
+        outputs = self.model(inputs) / sigma
         return outputs
 
     def get_loss(self, samples, sigmas):

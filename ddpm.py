@@ -95,8 +95,10 @@ class DDPM(nn.Module):
         # generate B random integers within [0, T]
         times = torch.randint(0, len(inputs), (inputs.shape[0],), device=DEVICE)
         noise = torch.randn_like(inputs)
-        perturbed = self.sqrt_alpha_bars[times].unsqueeze(-1) * inputs
-        perturbed += self.sqrt_beta_bars[times].unsqueeze(-1) * noise
+        perturbed = (
+            self.sqrt_alpha_bars[times].unsqueeze(-1) * inputs
+            + self.sqrt_beta_bars[times].unsqueeze(-1) * noise
+        )
         noise_pred = self.forward(perturbed, times)
         loss = self.cfg.model.loss_weight * self.criterion(noise_pred, noise)
         return loss
@@ -117,7 +119,6 @@ class DDPM(nn.Module):
             u_t = torch.randn(n_samples, n_channels, device=DEVICE)
             if time_t == 0:
                 u_t[:, :] = 0.0
-
             noise_pred = self.forward(
                 x_t, time_t * torch.ones(n_samples, dtype=x_t.dtype, device=DEVICE)
             )
